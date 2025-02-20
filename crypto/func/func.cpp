@@ -32,11 +32,14 @@
 #include "git.h"
 #include <fstream>
 #include "td/utils/port/path.h"
+#include "td/utils/JsonBuilder.h"
 
 namespace funC {
 
 int verbosity, indent, opt_level = 2;
 bool stack_layout_comments, op_rewrite_comments, program_envelope, asm_preamble;
+bool with_debug_info = false;
+std::vector<DebugInfo> debug_infos;
 bool interactive = false;
 GlobalPragma pragma_allow_post_modification{"allow-post-modification"};
 GlobalPragma pragma_compute_asm_ltr{"compute-asm-ltr"};
@@ -156,7 +159,7 @@ void generate_output_func(SymDef* func_sym, std::ostream &outs, std::ostream &er
   }
 }
 
-int generate_output(std::ostream &outs, std::ostream &errs) {
+int generate_output(std::ostream &outs, std::ostream &errs, std::ostream &debug_out) {
   if (asm_preamble) {
     outs << "\"Asm.fif\" include\n";
   }
@@ -196,6 +199,69 @@ int generate_output(std::ostream &outs, std::ostream &errs) {
   if (!boc_output_filename.empty()) {
     outs << "2 boc+>B \"" << boc_output_filename << "\" B>file\n";
   }
+
+  if (with_debug_info) {
+    td::JsonBuilder _jb;
+    auto objb = _jb.enter_object();
+
+    {
+      td::JsonBuilder jsonb;
+      auto arrb = jsonb.enter_array();
+      for (auto glob_var : glob_vars) {
+        auto vb = arrb.enter_value();
+        auto ob = vb.enter_object();
+
+        ob("name", glob_var->name());
+      }
+      arrb.leave();
+
+      objb("globals", td::JsonRaw(jsonb.string_builder().as_cslice()));
+    }
+
+    {
+      td::JsonBuilder jsonb;
+      auto arrb = jsonb.enter_array();
+      for (auto di : debug_infos) {
+        auto vb = arrb.enter_value();
+        auto ob = vb.enter_object();
+        ob("file", di.loc_file);
+        ob("line", (td::int64) di.loc_line);
+        ob("pos", (td::int64) di.loc_pos);
+
+        td::JsonBuilder varb;
+        auto vararrb = varb.enter_array();
+        for (auto varstr : di.vars) {
+          vararrb << varstr;
+        }
+        vararrb.leave();
+
+        td::JsonRaw vararrs(varb.string_builder().as_cslice());
+
+        if (!di.ret && !di.is_catch) {
+          ob("vars", vararrs);
+        }
+
+        ob("func", di.func_name);
+        if (di.first_stmt) {
+          ob("first_stmt", td::JsonTrue());
+        }
+        if (di.ret) {
+          ob("ret", td::JsonTrue());
+        }
+        if (di.is_catch) {
+          ob("is_catch", td::JsonTrue());
+        }
+      }
+      arrb.leave();
+
+      objb("locations", td::JsonRaw(jsonb.string_builder().as_cslice()));
+    }
+
+    objb.leave();
+
+    debug_out << _jb.string_builder().as_cslice().str();
+  }
+
   return errors;
 }
 
@@ -212,7 +278,7 @@ void output_inclusion_stack(std::ostream &errs) {
 }
 
 
-int func_proceed(const std::vector<std::string> &sources, std::ostream &outs, std::ostream &errs) {
+int func_proceed(const std::vector<std::string> &sources, std::ostream &outs, std::ostream &errs, std::ostream& debug_out) {
   if (funC::program_envelope && !funC::indent) {
     funC::indent = 1;
   }
@@ -239,7 +305,7 @@ int func_proceed(const std::vector<std::string> &sources, std::ostream &outs, st
     }
     pragma_allow_post_modification.check_enable_in_libs();
     pragma_compute_asm_ltr.check_enable_in_libs();
-    return funC::generate_output(outs, errs);
+    return funC::generate_output(outs, errs, debug_out);
   } catch (src::Fatal& fatal) {
     errs << "fatal: " << fatal << std::endl;
     output_inclusion_stack(errs);

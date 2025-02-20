@@ -978,6 +978,28 @@ void combine_parallel(val& x, const val y) {
 }
 }  // namespace blk_fl
 
+void insert_debug_info(Lexer& lex, CodeBlob& code, bool first_stmt, bool ret, bool is_catch = false) {
+  if (with_debug_info) {
+    auto& op = code.emplace_back(lex.cur().loc, Op::_DebugInfo);
+    op.simple_int_const = (int) debug_infos.size();
+    std::ostringstream locstrs;
+    locstrs << lex.cur().loc.fdescr;
+    DebugInfo info;
+    info.loc_file = locstrs.str();
+    if (lex.cur().loc.fdescr != nullptr) {
+      long line, pos;
+      lex.cur().loc.convert_pos(&line, &pos);
+      info.loc_line = line;
+      info.loc_pos = pos;
+    }
+    info.func_name = code.name;
+    info.first_stmt = first_stmt;
+    info.ret = ret;
+    info.is_catch = is_catch;
+    debug_infos.push_back(info);
+  }
+}
+
 blk_fl::val parse_return_stmt(Lexer& lex, CodeBlob& code) {
   auto expr = parse_expr(lex, code);
   expr->chk_rvalue(lex.cur());
@@ -991,6 +1013,7 @@ blk_fl::val parse_return_stmt(Lexer& lex, CodeBlob& code) {
     lex.cur().error(os.str());
   }
   std::vector<var_idx_t> tmp_vars = expr->pre_compile(code);
+  insert_debug_info(lex, code, false, true);
   code.emplace_back(lex.cur().loc, Op::_Return, std::move(tmp_vars));
   lex.expect(';');
   return blk_fl::ret;
@@ -1007,13 +1030,17 @@ blk_fl::val parse_implicit_ret_stmt(Lexer& lex, CodeBlob& code) {
        << " cannot be unified with implicit end-of-block return type " << ret_type << ": " << ue;
     lex.cur().error(os.str());
   }
+  insert_debug_info(lex, code, false, true);
   code.emplace_back(lex.cur().loc, Op::_Return);
   return blk_fl::ret;
 }
 
 blk_fl::val parse_stmt(Lexer& lex, CodeBlob& code);
 
-blk_fl::val parse_block_stmt(Lexer& lex, CodeBlob& code, bool no_new_scope = false) {
+blk_fl::val parse_block_stmt(Lexer& lex, CodeBlob& code, bool no_new_scope = false, bool is_catch = false) {
+  if (is_catch) {
+    insert_debug_info(lex, code, false, false, true);
+  }
   lex.expect('{');
   if (!no_new_scope) {
     sym::open_scope(lex);
@@ -1134,7 +1161,7 @@ blk_fl::val parse_try_catch_stmt(Lexer& lex, CodeBlob& code) {
   expr->define_new_vars(code);
   try_catch_op.left = expr->pre_compile(code);
   func_assert(try_catch_op.left.size() == 2 || try_catch_op.left.size() == 1);
-  blk_fl::val res1 = parse_block_stmt(lex, code);
+  blk_fl::val res1 = parse_block_stmt(lex, code, false, true);
   sym::close_scope(lex);
   code.close_pop_cur(lex.cur().loc);
   blk_fl::combine_parallel(res0, res1);
@@ -1183,6 +1210,8 @@ blk_fl::val parse_if_stmt(Lexer& lex, CodeBlob& code, int first_lex = _If) {
 }
 
 blk_fl::val parse_stmt(Lexer& lex, CodeBlob& code) {
+  insert_debug_info(lex, code, !code.had_stmts, false);
+  code.had_stmts = true;
   switch (lex.tp()) {
     case _Return: {
       lex.next();
@@ -1216,9 +1245,9 @@ blk_fl::val parse_stmt(Lexer& lex, CodeBlob& code) {
   }
 }
 
-CodeBlob* parse_func_body(Lexer& lex, FormalArgList arg_list, TypeExpr* ret_type) {
+CodeBlob* parse_func_body(Lexer& lex, FormalArgList arg_list, TypeExpr* ret_type, std::string& name) {
   lex.expect('{');
-  CodeBlob* blob = new CodeBlob{ret_type};
+  CodeBlob* blob = new CodeBlob{ret_type, name};
   if (pragma_allow_post_modification.enabled()) {
     blob->flags |= CodeBlob::_AllowPostModification;
   }
@@ -1522,8 +1551,7 @@ void parse_func_def(Lexer& lex) {
     if (func_sym_code->code) {
       lex.cur().error("redefinition of function `"s + func_name.str + "`");
     }
-    CodeBlob* code = parse_func_body(lex, arg_list, ret_type);
-    code->name = func_name.str;
+    CodeBlob* code = parse_func_body(lex, arg_list, ret_type, func_name.str);
     code->loc = loc;
     // code->print(std::cerr);  // !!!DEBUG!!!
     func_sym_code->code = code;
