@@ -41,7 +41,7 @@ td::Result<std::string> compile_internal(char *config_json) {
 
   TRY_RESULT(opt_level, td::get_json_object_int_field(config, "optLevel", false));
   TRY_RESULT(sources_obj, td::get_json_object_field(config, "sources", td::JsonValue::Type::Array, false));
-  TRY_RESULT(enable_debug_info, td::get_json_object_bool_field(obj, "debugInfo", true, false));
+  TRY_RESULT(enable_debug_info, td::get_json_object_bool_field(config, "debugInfo", true, false));
 
   auto &sources_arr = sources_obj.get_array();
 
