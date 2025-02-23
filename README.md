@@ -38,6 +38,17 @@
   </a>
 </p>
 
+This is a fork of the [krigga's debug-info FunC compiler patch](https://github.com/krigga/ton/tree/func-debug-info).
+The only change is that I've migrated the code to the Func compiler version 0.4.6. This was necessary to be able to apply it to FunC files resulting from Tact code compilation.
+
+The compiler's executables can be obtained using a [Docker image](./func-0.4.6-debug-info.Dockerfile).
+```shell
+docker pull ghcr.io/jefremof/ton/func-0.4.6-debug-info:latest
+```
+
+Additionally, the wasm version is included as part of the [debug-info patch for the Tact compiler](https://github.com/jefremof/tact/tree/tact-debug-info-bundled).
+
+##
 
 
 Main TON monorepo, which includes the code of the node/validator, lite-client, tonlib, FunC compiler, etc.
